@@ -8,9 +8,15 @@ project/project/
 .bsp/
 .metals/
 .vscode/
+project/metals.sbt
 
 # OS
 .DS_Store
 
 # Coursier cache
 .coursier/
+
+# Logs
+logs/
+
+build.sbt.semanticdb
