@@ -5,10 +5,10 @@ import com.daml.mcp.cli.models.DamlProjectConfig
 object Utils:
 
   def formatProjectsAsJson(projects: Seq[DamlProjectConfig]): String =
-    val projectJsons = projects.map(projectToJson)
+    val projectJsons = projects.map(damlProjectConfigToJson)
     s"[\n${projectJsons.mkString(",\n")}\n]"
 
-  private def projectToJson(p: DamlProjectConfig): String =
+  def damlProjectConfigToJson(p: DamlProjectConfig): String =
     s"""  {
        |    "sdk-version": "${escapeJson(p.sdkVersion)}",
        |    "name": "${escapeJson(p.name)}",

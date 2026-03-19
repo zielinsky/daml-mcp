@@ -10,3 +10,4 @@ final class DamlProjectService(project: DamlProject):
 
   def listDamlProjects(): IO[Seq[DamlProjectConfig]] = project.damlProjects
   
+  def mainDamlProject(): IO[DamlProjectConfig] = project.mainDamlProject

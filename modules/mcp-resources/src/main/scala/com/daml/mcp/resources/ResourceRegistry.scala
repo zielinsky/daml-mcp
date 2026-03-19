@@ -16,13 +16,27 @@ import java.util as ju
 
 class ResourceRegistry(projectService: DamlProjectService):
 
-  val damlYamlResource: SyncResourceSpecification = SyncResourceSpecification(
+  val damlMainProjectResource: SyncResourceSpecification = SyncResourceSpecification(
+    Resource
+      .builder()
+      .uri("daml://mainProjectConfig")
+      .name("DAML Main Project Configuration")
+      .description("The configuration of the main DAML project in the workspace")
+      .mimeType("application/json")
+      .build(),
+    (_, _) =>
+      val project = projectService.mainDamlProject().unsafeRunSync()
+      val content = Utils.damlProjectConfigToJson(project)
+      ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://mainProjectConfig", "application/json", content)))
+  )
+
+  val damlProjectsResource: SyncResourceSpecification = SyncResourceSpecification(
     Resource
       .builder()
       .uri("daml://projects")
       .name("DAML Projects")
       .description("List of all DAML projects in the workspace")
-      .mimeType("text/yaml")
+      .mimeType("application/json")
       .build(),
     (_, _) =>
       val projects = projectService.listDamlProjects().unsafeRunSync()
@@ -31,4 +45,4 @@ class ResourceRegistry(projectService: DamlProjectService):
   )
 
   val all: Seq[SyncResourceSpecification] =
-    Seq(damlYamlResource)
+    Seq(damlMainProjectResource, damlProjectsResource)

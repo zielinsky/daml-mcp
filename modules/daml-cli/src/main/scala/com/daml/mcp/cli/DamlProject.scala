@@ -26,6 +26,13 @@ final case class DamlProject(root: Path):
           DamlYamlParser.parseDamlProjectConfig(content)
       .map(_.flatten)
 
+  def mainDamlProject: IO[DamlProjectConfig] = IO.blocking:
+    val rootYaml = root.resolve("daml.yaml")
+    if Files.exists(rootYaml) then
+      val content = Files.readString(rootYaml)
+      DamlYamlParser.parseDamlProjectConfig(content).getOrElse(throw new RuntimeException("Failed to parse main DAML project configuration"))
+    else throw new RuntimeException("No main DAML project configuration found")
+
   def readFile(path: Path): IO[Option[String]] = IO.blocking:
     if Files.exists(path) && path.startsWith(root) then Some(Files.readString(path))
     else None
