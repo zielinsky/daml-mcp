@@ -174,6 +174,129 @@ final class DamlProjectService(project: DamlProject):
       val output = String(process.getInputStream.readAllBytes())
       output.trim
 
+  /** Generate markdown documentation for a single project using `daml damlc docs`. */
+  def generateDocs(projectName: String): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+        case Some(config) =>
+          runDamlDocs(config)
+
+  /** Generate a structured summary of all templates and choices across all projects. */
+  def allTemplatesSummary(): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      IO.traverse(projects.toList): config =>
+        runDamlDocs(config).map: docs =>
+          val summary = parseDocsToTemplatesSummary(docs)
+          if summary.nonEmpty then s"${config.name}:\n$summary" else s"${config.name}: (no templates)"
+      .map(_.mkString("\n\n"))
+
+  private def runDamlDocs(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      if config.damlFiles.isEmpty then
+        s"No DAML source files found in project '${config.name}'."
+      else
+        val projectDir = config.path.getParent
+        val tmpDir = Files.createTempDirectory("daml-docs-")
+        try
+          val cmd = Seq("daml", "damlc", "docs", "--no-legacy-assistant-warning") ++
+            config.damlFiles.map(_.toString) ++ Seq("-o", tmpDir.toString)
+          val pb = ProcessBuilder(cmd*)
+          pb.directory(projectDir.toFile)
+          pb.redirectErrorStream(true)
+          val process = pb.start()
+          val processOutput = String(process.getInputStream.readAllBytes())
+          val exitCode = process.waitFor()
+          if exitCode == 0 then
+            val mdFiles = Files.list(tmpDir).iterator().asScala
+              .filter(_.toString.endsWith(".md"))
+              .filterNot(_.getFileName.toString == "index.md")
+              .toSeq.sorted
+            val content = mdFiles.map(Files.readString).mkString("\n\n")
+            if content.isBlank then processOutput.trim else content.trim
+          else
+            s"ERROR: daml damlc docs failed for '${config.name}' (exit code $exitCode).\n$processOutput".trim
+        finally
+          Files.walk(tmpDir).sorted(java.util.Comparator.reverseOrder())
+            .forEach(Files.delete)
+
+  private[cli] def parseDocsToTemplatesSummary(docs: String): String =
+    val templateRegex = """\*\*template\*\*\s+\[(\w+)\]""".r
+    val choiceRegex = """\*\*Choice\s+(\S+)\*\*""".r
+
+    var templates = Vector.empty[(String, Vector[(String, String)], Vector[(String, Vector[(String, String)])])]
+    var currentTemplateName: Option[String] = None
+    var templateFields = Vector.empty[(String, String)]
+    var choices = Vector.empty[(String, Vector[(String, String)])]
+    var currentChoiceName: Option[String] = None
+    var choiceFields = Vector.empty[(String, String)]
+    var inTable = false
+    var headerSeen = false
+
+    def flushChoice(): Unit =
+      currentChoiceName.foreach(name => choices :+= (name, choiceFields))
+      currentChoiceName = None
+      choiceFields = Vector.empty
+
+    def flushTemplate(): Unit =
+      flushChoice()
+      currentTemplateName.foreach(name => templates :+= (name, templateFields, choices))
+      currentTemplateName = None
+      templateFields = Vector.empty
+      choices = Vector.empty
+
+    for line <- docs.linesIterator do
+      val stripped = line.replaceAll("^>\\s*", "").trim
+
+      if templateRegex.findFirstMatchIn(line).isDefined then
+        flushTemplate()
+        currentTemplateName = templateRegex.findFirstMatchIn(line).map(_.group(1))
+        inTable = false
+        headerSeen = false
+      else if choiceRegex.findFirstMatchIn(stripped).isDefined then
+        flushChoice()
+        currentChoiceName = choiceRegex.findFirstMatchIn(stripped).map(_.group(1).replace("\\_", "_"))
+        inTable = false
+        headerSeen = false
+      else if stripped.startsWith("| Field") && stripped.contains("Type") then
+        inTable = true
+        headerSeen = false
+      else if inTable && !headerSeen && stripped.startsWith("| :") then
+        headerSeen = true
+      else if inTable && headerSeen && stripped.startsWith("|") then
+        val cells = stripped.split("\\|").map(_.trim).filter(_.nonEmpty)
+        if cells.length >= 2 then
+          val fName = cells(0)
+          val fType = cleanMarkdownType(cells(1))
+          if currentChoiceName.isDefined then choiceFields :+= (fName, fType)
+          else templateFields :+= (fName, fType)
+      else if inTable && !stripped.startsWith("|") then
+        inTable = false
+        headerSeen = false
+
+    flushTemplate()
+
+    templates.map: (tName, tFields, tChoices) =>
+      val fieldsStr =
+        if tFields.nonEmpty then s" (${tFields.map((n, t) => s"$n: $t").mkString(", ")})"
+        else ""
+      val choicesStr = tChoices.map: (cName, cFields) =>
+        val cfStr =
+          if cFields.nonEmpty then s" (${cFields.map((n, t) => s"$n: $t").mkString(", ")})"
+          else ""
+        s"    - $cName$cfStr"
+      .mkString("\n")
+      s"  $tName$fieldsStr:\n$choicesStr"
+    .mkString("\n")
+
+  private def cleanMarkdownType(raw: String): String =
+    raw
+      .replaceAll("""\[([^\]]+)\]\([^)]+\)""", "$1")
+      .replace("\\[", "[").replace("\\]", "]")
+      .replace("\\_", "_")
+      .trim
+
   private[cli] def computeBuildOrder(graph: Map[String, Seq[String]]): Seq[BuildStep] =
     val stepOf = scala.collection.mutable.Map.empty[String, Int]
 

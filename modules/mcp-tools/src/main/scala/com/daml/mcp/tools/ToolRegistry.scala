@@ -163,9 +163,28 @@ class ToolRegistry(projectService: DamlProjectService):
       textResult(result)
     .build()
 
+  val damlProjectDocs: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_project_docs")
+        .description(
+          "Generate markdown documentation for a DAML project using `daml damlc docs`. " +
+          "Returns the full API reference including templates, data types, interfaces, " +
+          "choices, and functions defined in the project source files."
+        )
+        .inputSchema(projectNameSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val result = projectService.generateDocs(projectName).unsafeRunSync()
+      textResult(result)
+    .build()
+
   val all: Seq[SyncToolSpecification] = Seq(
     damlBuild, damlBuildSingle,
     damlClean, damlCleanSingle,
     damlTest, damlInspectDar,
-    damlCreateProject
+    damlCreateProject, damlProjectDocs
   )

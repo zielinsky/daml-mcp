@@ -72,5 +72,21 @@ class ResourceRegistry(projectService: DamlProjectService):
       ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://buildOrder", "application/json", content)))
   )
 
+  val allTemplatesResource: SyncResourceSpecification = SyncResourceSpecification(
+    Resource
+      .builder()
+      .uri("daml://allTemplates")
+      .name("DAML All Templates")
+      .description(
+        "Structured summary of all DAML templates and their choices across all projects in the workspace. " +
+        "Shows each project's templates with fields, and each choice with its parameters."
+      )
+      .mimeType("text/plain")
+      .build(),
+    (_, _) =>
+      val content = projectService.allTemplatesSummary().unsafeRunSync()
+      ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://allTemplates", "text/plain", content)))
+  )
+
   val all: Seq[SyncResourceSpecification] =
-    Seq(damlMainProjectResource, damlProjectsResource, dependencyGraphResource, buildOrderResource)
+    Seq(damlMainProjectResource, damlProjectsResource, dependencyGraphResource, buildOrderResource, allTemplatesResource)
