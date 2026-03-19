@@ -20,3 +20,5 @@ project/metals.sbt
 logs/
 
 build.sbt.semanticdb
+
+project/metals.sbt

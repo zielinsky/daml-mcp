@@ -1,0 +1,318 @@
+package com.daml.mcp.cli
+
+import cats.effect.IO
+import com.daml.mcp.cli.models.{BuildResult, BuildStep, CleanResult, DamlProjectConfig}
+import java.nio.file.{Files, Path}
+import scala.jdk.CollectionConverters.*
+
+/** High-level read-only queries over a DAML project. */
+final class DamlProjectService(project: DamlProject):
+
+  def listDamlProjects(): IO[Seq[DamlProjectConfig]] = project.damlProjects
+
+  def mainDamlProject(): IO[DamlProjectConfig] = project.mainDamlProject
+
+  /** Map of project name -> list of project names it depends on (via data-dependencies). */
+  def dependencyGraph(): IO[Map[String, Seq[String]]] =
+    listDamlProjects().map: projects =>
+      projects.map: p =>
+        val deps = p.dataDependencies.flatMap: depPath =>
+          projects.find(other => depPath.startsWith(other.path.getParent))
+            .map(_.name)
+        p.name -> deps
+      .toMap
+
+  /** Build order with step levels and dependency references. */
+  def buildOrder(): IO[Seq[BuildStep]] =
+    dependencyGraph().map(computeBuildOrder)
+
+  /** Run `daml build` for a single project by name. */
+  def buildSingle(projectName: String): IO[BuildResult] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(BuildResult(
+            project = projectName,
+            step = 0,
+            success = false,
+            output = s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}",
+            durationMs = 0
+          ))
+        case Some(config) =>
+          runDamlBuild(BuildStep(1, projectName, Seq.empty), config)
+
+  /** Run `daml build` for all projects in dependency order. Stops on first failure. */
+  def buildAll(): IO[Seq[BuildResult]] =
+    for
+      projects <- listDamlProjects()
+      steps    <- buildOrder()
+      byName    = projects.map(p => p.name -> p).toMap
+      grouped   = steps.groupBy(_.step).toSeq.sortBy(_._1)
+      results  <- runBuildSteps(grouped, byName, Vector.empty)
+    yield results
+
+  private def runBuildSteps(
+      remaining: Seq[(Int, Seq[BuildStep])],
+      byName: Map[String, DamlProjectConfig],
+      acc: Vector[BuildResult]
+  ): IO[Vector[BuildResult]] =
+    remaining match
+      case Seq() => IO.pure(acc)
+      case (step, projects) +: rest =>
+        IO.traverse(projects.toList)(bs => runDamlBuild(bs, byName(bs.project))).flatMap: results =>
+          val newAcc = acc ++ results
+          if results.exists(!_.success) then IO.pure(newAcc)
+          else runBuildSteps(rest, byName, newAcc)
+
+  private def runDamlBuild(step: BuildStep, config: DamlProjectConfig): IO[BuildResult] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      val startTime = System.currentTimeMillis()
+      val pb = ProcessBuilder("daml", "build", "-o", config.outputDar.getFileName.toString)
+      pb.directory(projectDir.toFile)
+      pb.redirectErrorStream(true)
+      val process = pb.start()
+      val output = String(process.getInputStream.readAllBytes())
+      val exitCode = process.waitFor()
+      val duration = System.currentTimeMillis() - startTime
+      BuildResult(
+        project = config.name,
+        step = step.step,
+        success = exitCode == 0,
+        output = output.trim,
+        durationMs = duration
+      )
+
+  /** Remove .daml/ directories and *.dar files from all sub-projects. */
+  def cleanAll(): IO[Seq[CleanResult]] =
+    listDamlProjects().flatMap: projects =>
+      IO.traverse(projects.toList)(cleanProject)
+
+  /** Remove .daml/ directory and *.dar files from a single project by name. */
+  def cleanSingle(projectName: String): IO[CleanResult] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(CleanResult(projectName, removedFiles = -1))
+        case Some(config) =>
+          cleanProject(config)
+
+  private def cleanProject(config: DamlProjectConfig): IO[CleanResult] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      var removedFiles = 0
+
+      val damlDir = projectDir.resolve(".daml")
+      if Files.exists(damlDir) then
+        Files.walk(damlDir).sorted(java.util.Comparator.reverseOrder())
+          .forEach: p =>
+            Files.delete(p)
+            removedFiles += 1
+
+      Files.list(projectDir).iterator().asScala
+        .filter(_.toString.endsWith(".dar"))
+        .foreach: p =>
+          Files.delete(p)
+          removedFiles += 1
+
+      CleanResult(config.name, removedFiles)
+
+  /** Scaffold a new DAML project using `daml new`. */
+  def createProject(projectName: String, template: Option[String]): IO[String] =
+    IO.blocking:
+      val targetDir = project.root.resolve(projectName)
+      if Files.exists(targetDir) then
+        s"ERROR: Directory '$projectName' already exists at ${targetDir}."
+      else
+        val cmd = Seq("daml", "new", projectName) ++ template.toSeq
+        val pb = ProcessBuilder(cmd*)
+        pb.directory(project.root.toFile)
+        pb.redirectErrorStream(true)
+        val process = pb.start()
+        val output = String(process.getInputStream.readAllBytes())
+        val exitCode = process.waitFor()
+        if exitCode == 0 then
+          s"Project '$projectName' created successfully at ${targetDir}.\n$output".trim
+        else
+          s"ERROR: Failed to create project '$projectName' (exit code $exitCode).\n$output".trim
+
+  /** Run `daml test` for a specific project by name. */
+  def runDamlTest(projectName: String): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None => 
+          IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+        case Some(config) =>
+          runDamlTestForProject(config)
+
+  private def runDamlTestForProject(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      val pb = ProcessBuilder("daml", "test", "--no-legacy-assistant-warning")
+      pb.directory(projectDir.toFile)
+      pb.redirectErrorStream(true)
+      val process = pb.start()
+      val output = String(process.getInputStream.readAllBytes())
+      output.trim
+
+  /** Inspect a DAML archive (.dar) file to show its API, templates, and data types. */
+  def inspectDar(projectName: String): IO[String] =
+      listDamlProjects().flatMap: projects =>
+        projects.find(_.name == projectName) match
+          case None =>
+            IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+          case Some(config) =>
+            runInspectDarForProject(config)
+
+  private def runInspectDarForProject(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      val pb = ProcessBuilder("daml", "inspect-dar", "--no-legacy-assistant-warning", config.outputDar.toString)
+      pb.directory(projectDir.toFile)
+      pb.redirectErrorStream(true)
+      val process = pb.start()
+      val output = String(process.getInputStream.readAllBytes())
+      output.trim
+
+  /** Generate markdown documentation for a single project using `daml damlc docs`. */
+  def generateDocs(projectName: String): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+        case Some(config) =>
+          runDamlDocs(config)
+
+  /** Generate a structured summary of all templates and choices across all projects. */
+  def allTemplatesSummary(): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      IO.traverse(projects.toList): config =>
+        runDamlDocs(config).map: docs =>
+          val summary = parseDocsToTemplatesSummary(docs)
+          if summary.nonEmpty then s"${config.name}:\n$summary" else s"${config.name}: (no templates)"
+      .map(_.mkString("\n\n"))
+
+  private def runDamlDocs(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      if config.damlFiles.isEmpty then
+        s"No DAML source files found in project '${config.name}'."
+      else
+        val projectDir = config.path.getParent
+        val tmpDir = Files.createTempDirectory("daml-docs-")
+        try
+          val cmd = Seq("daml", "damlc", "docs", "--no-legacy-assistant-warning") ++
+            config.damlFiles.map(_.toString) ++ Seq("-o", tmpDir.toString)
+          val pb = ProcessBuilder(cmd*)
+          pb.directory(projectDir.toFile)
+          pb.redirectErrorStream(true)
+          val process = pb.start()
+          val processOutput = String(process.getInputStream.readAllBytes())
+          val exitCode = process.waitFor()
+          if exitCode == 0 then
+            val mdFiles = Files.list(tmpDir).iterator().asScala
+              .filter(_.toString.endsWith(".md"))
+              .filterNot(_.getFileName.toString == "index.md")
+              .toSeq.sorted
+            val content = mdFiles.map(Files.readString).mkString("\n\n")
+            if content.isBlank then processOutput.trim else content.trim
+          else
+            s"ERROR: daml damlc docs failed for '${config.name}' (exit code $exitCode).\n$processOutput".trim
+        finally
+          Files.walk(tmpDir).sorted(java.util.Comparator.reverseOrder())
+            .forEach(Files.delete)
+
+  private[cli] def parseDocsToTemplatesSummary(docs: String): String =
+    val templateRegex = """\*\*template\*\*\s+\[(\w+)\]""".r
+    val choiceRegex = """\*\*Choice\s+(\S+)\*\*""".r
+
+    var templates = Vector.empty[(String, Vector[(String, String)], Vector[(String, Vector[(String, String)])])]
+    var currentTemplateName: Option[String] = None
+    var templateFields = Vector.empty[(String, String)]
+    var choices = Vector.empty[(String, Vector[(String, String)])]
+    var currentChoiceName: Option[String] = None
+    var choiceFields = Vector.empty[(String, String)]
+    var inTable = false
+    var headerSeen = false
+
+    def flushChoice(): Unit =
+      currentChoiceName.foreach(name => choices :+= (name, choiceFields))
+      currentChoiceName = None
+      choiceFields = Vector.empty
+
+    def flushTemplate(): Unit =
+      flushChoice()
+      currentTemplateName.foreach(name => templates :+= (name, templateFields, choices))
+      currentTemplateName = None
+      templateFields = Vector.empty
+      choices = Vector.empty
+
+    for line <- docs.linesIterator do
+      val stripped = line.replaceAll("^>\\s*", "").trim
+
+      if templateRegex.findFirstMatchIn(line).isDefined then
+        flushTemplate()
+        currentTemplateName = templateRegex.findFirstMatchIn(line).map(_.group(1))
+        inTable = false
+        headerSeen = false
+      else if choiceRegex.findFirstMatchIn(stripped).isDefined then
+        flushChoice()
+        currentChoiceName = choiceRegex.findFirstMatchIn(stripped).map(_.group(1).replace("\\_", "_"))
+        inTable = false
+        headerSeen = false
+      else if stripped.startsWith("| Field") && stripped.contains("Type") then
+        inTable = true
+        headerSeen = false
+      else if inTable && !headerSeen && stripped.startsWith("| :") then
+        headerSeen = true
+      else if inTable && headerSeen && stripped.startsWith("|") then
+        val cells = stripped.split("\\|").map(_.trim).filter(_.nonEmpty)
+        if cells.length >= 2 then
+          val fName = cells(0)
+          val fType = cleanMarkdownType(cells(1))
+          if currentChoiceName.isDefined then choiceFields :+= (fName, fType)
+          else templateFields :+= (fName, fType)
+      else if inTable && !stripped.startsWith("|") then
+        inTable = false
+        headerSeen = false
+
+    flushTemplate()
+
+    templates.map: (tName, tFields, tChoices) =>
+      val fieldsStr =
+        if tFields.nonEmpty then s" (${tFields.map((n, t) => s"$n: $t").mkString(", ")})"
+        else ""
+      val choicesStr = tChoices.map: (cName, cFields) =>
+        val cfStr =
+          if cFields.nonEmpty then s" (${cFields.map((n, t) => s"$n: $t").mkString(", ")})"
+          else ""
+        s"    - $cName$cfStr"
+      .mkString("\n")
+      s"  $tName$fieldsStr:\n$choicesStr"
+    .mkString("\n")
+
+  private def cleanMarkdownType(raw: String): String =
+    raw
+      .replaceAll("""\[([^\]]+)\]\([^)]+\)""", "$1")
+      .replace("\\[", "[").replace("\\]", "]")
+      .replace("\\_", "_")
+      .trim
+
+  private[cli] def computeBuildOrder(graph: Map[String, Seq[String]]): Seq[BuildStep] =
+    val stepOf = scala.collection.mutable.Map.empty[String, Int]
+
+    def resolveStep(node: String): Int =
+      stepOf.getOrElseUpdate(node, {
+        val deps = graph.getOrElse(node, Seq.empty)
+        if deps.isEmpty then 1
+        else deps.map(resolveStep).max + 1
+      })
+
+    graph.keys.foreach(resolveStep)
+
+    stepOf.toSeq
+      .sortBy((name, step) => (step, name))
+      .map: (name, step) =>
+        val depSteps = graph.getOrElse(name, Seq.empty)
+          .map(d => stepOf(d))
+          .distinct.sorted
+        BuildStep(step, name, depSteps)
