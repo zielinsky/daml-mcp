@@ -1,6 +1,6 @@
 package com.daml.mcp.resources
 
-import com.daml.mcp.cli.models.DamlProjectConfig
+import com.daml.mcp.cli.models.{BuildStep, DamlProjectConfig}
 
 object Utils:
 
@@ -16,16 +16,29 @@ object Utils:
        |    "source": "${escapeJson(p.source)}",
        |    "sourcePath": "${escapeJson(p.sourcePath.toString)}",
        |    "version": "${escapeJson(p.version)}",
-       |    "dependencies": ${formatList(p.dependencies)},
-       |    "data-dependencies": ${formatList(p.dataDependencies.map(_.toString))}
+       |    "outputDar": "${escapeJson(p.outputDar.toString)}",
+       |    "dependencies": ${formatStringList(p.dependencies)},
+       |    "data-dependencies": ${formatStringList(p.dataDependencies.map(_.toString))},
+       |    "damlFiles": ${formatStringList(p.damlFiles.map(_.toString))}
        |  }""".stripMargin
 
-  private def formatList(list: Seq[String]): String =
-    if (list == null || list.isEmpty) "[]"
+  def dependencyGraphToJson(graph: Map[String, Seq[String]]): String =
+    val entries = graph.toSeq.sortBy(_._1).map: (name, deps) =>
+      s"""    "${escapeJson(name)}": ${formatStringList(deps)}"""
+    s"{\n  \"graph\": {\n${entries.mkString(",\n")}\n  }\n}"
+
+  def buildOrderToJson(steps: Seq[BuildStep]): String =
+    val entries = steps.map: s =>
+      val depsList = s.dependsOn.mkString("[", ", ", "]")
+      s"""    { "step": ${s.step}, "project": "${escapeJson(s.project)}", "dependsOn": $depsList }"""
+    s"{\n  \"buildOrder\": [\n${entries.mkString(",\n")}\n  ]\n}"
+
+  private def formatStringList(list: Seq[String]): String =
+    if list == null || list.isEmpty then "[]"
     else list.map(s => s""""${escapeJson(s)}"""").mkString("[\n      ", ",\n      ", "\n    ]")
 
   private def escapeJson(s: String): String =
-    if (s == null) ""
+    if s == null then ""
     else s.replace("\\", "\\\\")
           .replace("\"", "\\\"")
           .replace("\n", "\\n")

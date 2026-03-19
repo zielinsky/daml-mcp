@@ -2,7 +2,6 @@ package com.daml.mcp.tools
 
 import cats.effect.unsafe.implicits.global
 import com.daml.mcp.cli.DamlProjectService
-import com.daml.mcp.cli.models.{DamlTemplate, DamlChoice}
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification
 import io.modelcontextprotocol.spec.McpSchema
 import io.modelcontextprotocol.spec.McpSchema.{CallToolResult, JsonSchema, Tool}
@@ -12,5 +11,30 @@ import scala.jdk.CollectionConverters.*
 
 class ToolRegistry(projectService: DamlProjectService):
 
+  private val emptySchema: JsonSchema =
+    JsonSchema("object", ju.Map.of(), ju.List.of(), null, null, null)
 
-    val all: Seq[SyncToolSpecification] = Seq()
+  private def textResult(text: String): CallToolResult =
+    CallToolResult.builder()
+      .content(ju.List.of(McpSchema.TextContent(text)))
+      .build()
+
+  val damlBuild: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_build")
+        .description(
+          "Build all DAML projects in the workspace in correct dependency order. " +
+          "Runs `daml build` for each sub-project following the topological build graph. " +
+          "Stops on first failure."
+        )
+        .inputSchema(emptySchema)
+        .build()
+    )
+    .callHandler: (_, _) =>
+      val results = projectService.buildAll().unsafeRunSync()
+      textResult(Utils.formatBuildResults(results))
+    .build()
+
+  val all: Seq[SyncToolSpecification] = Seq(damlBuild)

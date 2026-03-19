@@ -2,9 +2,7 @@ package com.daml.mcp.cli.models
 
 import java.nio.file.Path
 
-/** Parsed DAML project configuration (daml.yaml).
-  * Contains only: sdk-version, name, source, version, dependencies, data-dependencies.
-  */
+/** Parsed DAML project configuration (daml.yaml). */
 final case class DamlProjectConfig(
     sdkVersion: String,
     name: String,
@@ -13,5 +11,7 @@ final case class DamlProjectConfig(
     sourcePath: Path,
     version: String,
     dependencies: Seq[String],
-    dataDependencies: Seq[Path]
+    dataDependencies: Seq[Path],
+    damlFiles: Seq[Path],
+    outputDar: Path
 )

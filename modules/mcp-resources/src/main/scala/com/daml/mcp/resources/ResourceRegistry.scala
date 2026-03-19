@@ -44,5 +44,33 @@ class ResourceRegistry(projectService: DamlProjectService):
       ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://projects", "application/json", content)))
   )
 
+  val dependencyGraphResource: SyncResourceSpecification = SyncResourceSpecification(
+    Resource
+      .builder()
+      .uri("daml://dependencyGraph")
+      .name("DAML Dependency Graph")
+      .description("Dependency graph showing which DAML projects depend on which (via data-dependencies)")
+      .mimeType("application/json")
+      .build(),
+    (_, _) =>
+      val graph = projectService.dependencyGraph().unsafeRunSync()
+      val content = Utils.dependencyGraphToJson(graph)
+      ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://dependencyGraph", "application/json", content)))
+  )
+
+  val buildOrderResource: SyncResourceSpecification = SyncResourceSpecification(
+    Resource
+      .builder()
+      .uri("daml://buildOrder")
+      .name("DAML Build Order")
+      .description("Correct topological build order for DAML projects based on their dependencies")
+      .mimeType("application/json")
+      .build(),
+    (_, _) =>
+      val steps = projectService.buildOrder().unsafeRunSync()
+      val content = Utils.buildOrderToJson(steps)
+      ReadResourceResult(ju.List.of(McpSchema.TextResourceContents("daml://buildOrder", "application/json", content)))
+  )
+
   val all: Seq[SyncResourceSpecification] =
-    Seq(damlMainProjectResource, damlProjectsResource)
+    Seq(damlMainProjectResource, damlProjectsResource, dependencyGraphResource, buildOrderResource)

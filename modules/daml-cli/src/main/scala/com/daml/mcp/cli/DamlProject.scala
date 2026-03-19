@@ -22,15 +22,27 @@ final case class DamlProject(root: Path):
       IO.traverse(paths): path =>
         IO.blocking:
           val content = Files.readString(path)
-          DamlYamlParser.parseDamlProjectConfig(root, path, content)
+          DamlParser.parseDamlProjectConfig(root, path, content).map(enrichWithFiles)
       .map(_.flatten)
 
   def mainDamlProject: IO[DamlProjectConfig] = IO.blocking:
     val rootYaml = root.resolve("daml.yaml")
     if Files.exists(rootYaml) then
       val content = Files.readString(rootYaml)
-      DamlYamlParser.parseDamlProjectConfig(root, rootYaml, content).getOrElse(throw new RuntimeException("Failed to parse main DAML project configuration"))
+      val config = DamlParser.parseDamlProjectConfig(root, rootYaml, content)
+        .getOrElse(throw new RuntimeException("Failed to parse main DAML project configuration"))
+      enrichWithFiles(config)
     else throw new RuntimeException("No main DAML project configuration found")
+
+  private def enrichWithFiles(config: DamlProjectConfig): DamlProjectConfig =
+    val sourceDir = config.sourcePath
+    val damlFiles =
+      if Files.exists(sourceDir) && Files.isDirectory(sourceDir) then
+        Files.walk(sourceDir).iterator().asScala
+          .filter(p => p.toString.endsWith(".daml"))
+          .toSeq.sorted
+      else Seq.empty
+    config.copy(damlFiles = damlFiles)
 
   def readFile(path: Path): IO[Option[String]] = IO.blocking:
     if Files.exists(path) && path.startsWith(root) then Some(Files.readString(path))
