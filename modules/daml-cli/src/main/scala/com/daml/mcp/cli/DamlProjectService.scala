@@ -93,6 +93,25 @@ final class DamlProjectService(project: DamlProject):
 
       CleanResult(config.name, removedFiles)
 
+  /** Run `daml test` for a specific project by name. */
+  def runDamlTest(projectName: String): IO[String] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None => 
+          IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+        case Some(config) =>
+          runDamlTestForProject(config)
+
+  private def runDamlTestForProject(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      val pb = ProcessBuilder("daml", "test", "--no-legacy-assistant-warning")
+      pb.directory(projectDir.toFile)
+      pb.redirectErrorStream(true)
+      val process = pb.start()
+      val output = String(process.getInputStream.readAllBytes())
+      output.trim
+
   private[cli] def computeBuildOrder(graph: Map[String, Seq[String]]): Seq[BuildStep] =
     val stepOf = scala.collection.mutable.Map.empty[String, Int]
 

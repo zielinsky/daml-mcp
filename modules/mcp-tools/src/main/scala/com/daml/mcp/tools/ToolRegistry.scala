@@ -14,6 +14,11 @@ class ToolRegistry(projectService: DamlProjectService):
   private val emptySchema: JsonSchema =
     JsonSchema("object", ju.Map.of(), ju.List.of(), null, null, null)
 
+  private val projectNameSchema: JsonSchema =
+    val properties = new ju.HashMap[String, Object]()
+    properties.put("projectName", ju.Map.of[String, Object]("type", "string"))
+    JsonSchema("object", properties, ju.List.of("projectName"), null, null, null)
+
   private def textResult(text: String): CallToolResult =
     CallToolResult.builder()
       .content(ju.List.of(McpSchema.TextContent(text)))
@@ -54,4 +59,22 @@ class ToolRegistry(projectService: DamlProjectService):
       textResult(Utils.formatCleanResults(results))
     .build()
 
-  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean)
+  val damlTest: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_test")
+        .description(
+          "Runs daml test for a specific DAML project to verify syntax, typecheck, " +
+          "and execute business logic scripts. Returns the compiler and test runner output."
+        )
+        .inputSchema(projectNameSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val result = projectService.runDamlTest(projectName).unsafeRunSync()
+      textResult(result)
+    .build()
+
+  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean, damlTest)
