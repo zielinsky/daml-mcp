@@ -9,28 +9,27 @@ final case class DamlProject(root: Path):
 
   def damlProjectYamlPaths: IO[Seq[Path]] = IO.blocking:
     val rootYaml = root.resolve("daml.yaml")
-    val fromRoot = if Files.exists(rootYaml) then Seq(rootYaml) else Seq.empty
     val fromTree = Files
       .walk(root)
       .iterator()
       .asScala
       .filter(p => p.getFileName.toString == "daml.yaml" && p != rootYaml)
       .toSeq
-    (fromRoot ++ fromTree).distinct
+    fromTree.distinct
 
   def damlProjects: IO[Seq[DamlProjectConfig]] =
     damlProjectYamlPaths.flatMap: paths =>
       IO.traverse(paths): path =>
         IO.blocking:
           val content = Files.readString(path)
-          DamlYamlParser.parseDamlProjectConfig(content)
+          DamlYamlParser.parseDamlProjectConfig(root, path, content)
       .map(_.flatten)
 
   def mainDamlProject: IO[DamlProjectConfig] = IO.blocking:
     val rootYaml = root.resolve("daml.yaml")
     if Files.exists(rootYaml) then
       val content = Files.readString(rootYaml)
-      DamlYamlParser.parseDamlProjectConfig(content).getOrElse(throw new RuntimeException("Failed to parse main DAML project configuration"))
+      DamlYamlParser.parseDamlProjectConfig(root, rootYaml, content).getOrElse(throw new RuntimeException("Failed to parse main DAML project configuration"))
     else throw new RuntimeException("No main DAML project configuration found")
 
   def readFile(path: Path): IO[Option[String]] = IO.blocking:

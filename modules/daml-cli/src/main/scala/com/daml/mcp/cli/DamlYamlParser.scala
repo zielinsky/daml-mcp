@@ -5,10 +5,11 @@ import com.daml.mcp.cli.models.DamlProjectConfig
 import org.yaml.snakeyaml.Yaml
 
 import scala.jdk.CollectionConverters.*
+import java.nio.file.Path
 
 object DamlYamlParser:
 
-  def parseDamlProjectConfig(content: String): Option[DamlProjectConfig] =
+  def parseDamlProjectConfig(rootPath: Path, path: Path, content: String): Option[DamlProjectConfig] =
     try
       val yaml = Yaml()
       val map  = yaml.load(content).asInstanceOf[java.util.Map[String, Any]]
@@ -17,12 +18,14 @@ object DamlYamlParser:
         val m = map.asScala
         Some(
           DamlProjectConfig(
+            path = rootPath.resolve(path).normalize(),
             sdkVersion = getString(m, "sdk-version").getOrElse(""),
             name = getString(m, "name").getOrElse(""),
             source = getString(m, "source").getOrElse("daml"),
+            sourcePath = path.getParent.resolve(getString(m, "source").getOrElse("daml")),
             version = getString(m, "version").getOrElse(""),
             dependencies = getStringList(m, "dependencies"),
-            dataDependencies = getStringList(m, "data-dependencies")
+            dataDependencies = getStringList(m, "data-dependencies").map(s => path.getParent.resolve(s).normalize())
           )
         )
     catch case _: Exception => None
