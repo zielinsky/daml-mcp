@@ -19,11 +19,6 @@ class ToolRegistry(projectService: DamlProjectService):
     properties.put("projectName", ju.Map.of[String, Object]("type", "string"))
     JsonSchema("object", properties, ju.List.of("projectName"), null, null, null)
 
-  private val darPathSchema: JsonSchema =
-    val properties = new ju.HashMap[String, Object]()
-    properties.put("darPath", ju.Map.of[String, Object]("type", "string"))
-    JsonSchema("object", properties, ju.List.of("darPath"), null, null, null)
-
   private def textResult(text: String): CallToolResult =
     CallToolResult.builder()
       .content(ju.List.of(McpSchema.TextContent(text)))
