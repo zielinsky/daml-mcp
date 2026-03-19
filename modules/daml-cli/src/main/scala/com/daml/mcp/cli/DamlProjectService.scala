@@ -112,6 +112,25 @@ final class DamlProjectService(project: DamlProject):
       val output = String(process.getInputStream.readAllBytes())
       output.trim
 
+  /** Inspect a DAML archive (.dar) file to show its API, templates, and data types. */
+  def inspectDar(projectName: String): IO[String] =
+      listDamlProjects().flatMap: projects =>
+        projects.find(_.name == projectName) match
+          case None =>
+            IO.pure(s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}")
+          case Some(config) =>
+            runInspectDarForProject(config)
+
+  private def runInspectDarForProject(config: DamlProjectConfig): IO[String] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      val pb = ProcessBuilder("daml", "inspect-dar", "--no-legacy-assistant-warning", config.outputDar.toString)
+      pb.directory(projectDir.toFile)
+      pb.redirectErrorStream(true)
+      val process = pb.start()
+      val output = String(process.getInputStream.readAllBytes())
+      output.trim
+
   private[cli] def computeBuildOrder(graph: Map[String, Seq[String]]): Seq[BuildStep] =
     val stepOf = scala.collection.mutable.Map.empty[String, Int]
 

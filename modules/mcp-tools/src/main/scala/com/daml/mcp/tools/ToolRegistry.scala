@@ -19,6 +19,11 @@ class ToolRegistry(projectService: DamlProjectService):
     properties.put("projectName", ju.Map.of[String, Object]("type", "string"))
     JsonSchema("object", properties, ju.List.of("projectName"), null, null, null)
 
+  private val darPathSchema: JsonSchema =
+    val properties = new ju.HashMap[String, Object]()
+    properties.put("darPath", ju.Map.of[String, Object]("type", "string"))
+    JsonSchema("object", properties, ju.List.of("darPath"), null, null, null)
+
   private def textResult(text: String): CallToolResult =
     CallToolResult.builder()
       .content(ju.List.of(McpSchema.TextContent(text)))
@@ -77,4 +82,23 @@ class ToolRegistry(projectService: DamlProjectService):
       textResult(result)
     .build()
 
-  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean, damlTest)
+  val damlInspectDar: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_inspect_dar")
+        .description(
+          "Inspects a compiled DAML archive (.dar) and returns its exposed API, templates, " +
+          "interfaces, and data types. Useful for understanding external dependencies before " +
+          "integrating with them."
+        )
+        .inputSchema(projectNameSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val result = projectService.inspectDar(projectName).unsafeRunSync()
+      textResult(result)
+    .build()
+
+  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean, damlTest, damlInspectDar)
