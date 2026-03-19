@@ -26,6 +26,21 @@ final class DamlProjectService(project: DamlProject):
   def buildOrder(): IO[Seq[BuildStep]] =
     dependencyGraph().map(computeBuildOrder)
 
+  /** Run `daml build` for a single project by name. */
+  def buildSingle(projectName: String): IO[BuildResult] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(BuildResult(
+            project = projectName,
+            step = 0,
+            success = false,
+            output = s"ERROR: Project '$projectName' not found. Available projects: ${projects.map(_.name).mkString(", ")}",
+            durationMs = 0
+          ))
+        case Some(config) =>
+          runDamlBuild(BuildStep(1, projectName, Seq.empty), config)
+
   /** Run `daml build` for all projects in dependency order. Stops on first failure. */
   def buildAll(): IO[Seq[BuildResult]] =
     for
@@ -73,6 +88,15 @@ final class DamlProjectService(project: DamlProject):
     listDamlProjects().flatMap: projects =>
       IO.traverse(projects.toList)(cleanProject)
 
+  /** Remove .daml/ directory and *.dar files from a single project by name. */
+  def cleanSingle(projectName: String): IO[CleanResult] =
+    listDamlProjects().flatMap: projects =>
+      projects.find(_.name == projectName) match
+        case None =>
+          IO.pure(CleanResult(projectName, removedFiles = -1))
+        case Some(config) =>
+          cleanProject(config)
+
   private def cleanProject(config: DamlProjectConfig): IO[CleanResult] =
     IO.blocking:
       val projectDir = config.path.getParent
@@ -92,6 +116,25 @@ final class DamlProjectService(project: DamlProject):
           removedFiles += 1
 
       CleanResult(config.name, removedFiles)
+
+  /** Scaffold a new DAML project using `daml new`. */
+  def createProject(projectName: String, template: Option[String]): IO[String] =
+    IO.blocking:
+      val targetDir = project.root.resolve(projectName)
+      if Files.exists(targetDir) then
+        s"ERROR: Directory '$projectName' already exists at ${targetDir}."
+      else
+        val cmd = Seq("daml", "new", projectName) ++ template.toSeq
+        val pb = ProcessBuilder(cmd*)
+        pb.directory(project.root.toFile)
+        pb.redirectErrorStream(true)
+        val process = pb.start()
+        val output = String(process.getInputStream.readAllBytes())
+        val exitCode = process.waitFor()
+        if exitCode == 0 then
+          s"Project '$projectName' created successfully at ${targetDir}.\n$output".trim
+        else
+          s"ERROR: Failed to create project '$projectName' (exit code $exitCode).\n$output".trim
 
   /** Run `daml test` for a specific project by name. */
   def runDamlTest(projectName: String): IO[String] =

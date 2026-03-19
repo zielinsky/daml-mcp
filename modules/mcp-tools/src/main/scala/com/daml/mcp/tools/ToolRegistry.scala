@@ -19,10 +19,77 @@ class ToolRegistry(projectService: DamlProjectService):
     properties.put("projectName", ju.Map.of[String, Object]("type", "string"))
     JsonSchema("object", properties, ju.List.of("projectName"), null, null, null)
 
+  private val createProjectSchema: JsonSchema =
+    val properties = new ju.HashMap[String, Object]()
+    properties.put("projectName", ju.Map.of[String, Object]("type", "string", "description", "Name of the new project (will also be the directory name)"))
+    properties.put("template", ju.Map.of[String, Object]("type", "string", "description", "Optional daml new template name (e.g. empty-skeleton)"))
+    JsonSchema("object", properties, ju.List.of("projectName"), null, null, null)
+
   private def textResult(text: String): CallToolResult =
     CallToolResult.builder()
       .content(ju.List.of(McpSchema.TextContent(text)))
       .build()
+
+  val damlBuildSingle: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_build_single")
+        .description(
+          "Build a single DAML project by name. " +
+          "Runs `daml build` only for the specified sub-project. " +
+          "Use daml://projects resource to discover available project names."
+        )
+        .inputSchema(projectNameSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val result = projectService.buildSingle(projectName).unsafeRunSync()
+      textResult(Utils.formatBuildResults(Seq(result)))
+    .build()
+
+  val damlCleanSingle: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_clean_single")
+        .description(
+          "Clean a single DAML project by name. " +
+          "Removes .daml/ directory and *.dar files only for the specified sub-project. " +
+          "Use daml://projects resource to discover available project names."
+        )
+        .inputSchema(projectNameSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val result = projectService.cleanSingle(projectName).unsafeRunSync()
+      if result.removedFiles == -1 then
+        textResult(s"ERROR: Project '$projectName' not found. Use daml://projects to list available projects.")
+      else
+        textResult(Utils.formatCleanResults(Seq(result)))
+    .build()
+
+  val damlCreateProject: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_create_project")
+        .description(
+          "Scaffold a new DAML project in the workspace using `daml new`. " +
+          "Creates a new sub-project directory with a daml.yaml and starter source files. " +
+          "Optionally accepts a template name (e.g. empty-skeleton)."
+        )
+        .inputSchema(createProjectSchema)
+        .build()
+    )
+    .callHandler: (_, request) =>
+      val projectName = request.arguments().get("projectName").toString
+      val template = Option(request.arguments().get("template")).map(_.toString)
+      val result = projectService.createProject(projectName, template).unsafeRunSync()
+      textResult(result)
+    .build()
 
   val damlBuild: SyncToolSpecification = SyncToolSpecification
     .builder()
@@ -96,4 +163,9 @@ class ToolRegistry(projectService: DamlProjectService):
       textResult(result)
     .build()
 
-  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean, damlTest, damlInspectDar)
+  val all: Seq[SyncToolSpecification] = Seq(
+    damlBuild, damlBuildSingle,
+    damlClean, damlCleanSingle,
+    damlTest, damlInspectDar,
+    damlCreateProject
+  )
