@@ -37,4 +37,21 @@ class ToolRegistry(projectService: DamlProjectService):
       textResult(Utils.formatBuildResults(results))
     .build()
 
-  val all: Seq[SyncToolSpecification] = Seq(damlBuild)
+  val damlClean: SyncToolSpecification = SyncToolSpecification
+    .builder()
+    .tool(
+      Tool.builder()
+        .name("daml_clean")
+        .description(
+          "Clean all DAML projects in the workspace. " +
+          "Removes .daml/ directories and *.dar files from each sub-project."
+        )
+        .inputSchema(emptySchema)
+        .build()
+    )
+    .callHandler: (_, _) =>
+      val results = projectService.cleanAll().unsafeRunSync()
+      textResult(Utils.formatCleanResults(results))
+    .build()
+
+  val all: Seq[SyncToolSpecification] = Seq(damlBuild, damlClean)

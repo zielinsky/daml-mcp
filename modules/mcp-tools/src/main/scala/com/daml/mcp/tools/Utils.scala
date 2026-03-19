@@ -1,6 +1,6 @@
 package com.daml.mcp.tools
 
-import com.daml.mcp.cli.models.BuildResult
+import com.daml.mcp.cli.models.{BuildResult, CleanResult}
 
 object Utils:
 
@@ -22,3 +22,15 @@ object Utils:
       lines.mkString("\n")
 
     (header +: details).mkString("\n\n")
+
+  def formatCleanResults(results: Seq[CleanResult]): String =
+    if results.isEmpty then return "No projects to clean."
+
+    val totalRemoved = results.map(_.removedFiles).sum
+    val header = s"CLEAN COMPLETE ($totalRemoved files removed from ${results.length} projects)"
+
+    val details = results.map: r =>
+      if r.removedFiles > 0 then s"  ${r.project}: ${r.removedFiles} files removed"
+      else s"  ${r.project}: already clean"
+
+    (header +: details).mkString("\n")

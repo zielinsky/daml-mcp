@@ -1,8 +1,8 @@
 package com.daml.mcp.cli
 
 import cats.effect.IO
-import com.daml.mcp.cli.models.{BuildResult, BuildStep, DamlProjectConfig}
-import java.nio.file.Path
+import com.daml.mcp.cli.models.{BuildResult, BuildStep, CleanResult, DamlProjectConfig}
+import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
 /** High-level read-only queries over a DAML project. */
@@ -67,6 +67,31 @@ final class DamlProjectService(project: DamlProject):
         output = output.trim,
         durationMs = duration
       )
+
+  /** Remove .daml/ directories and *.dar files from all sub-projects. */
+  def cleanAll(): IO[Seq[CleanResult]] =
+    listDamlProjects().flatMap: projects =>
+      IO.traverse(projects.toList)(cleanProject)
+
+  private def cleanProject(config: DamlProjectConfig): IO[CleanResult] =
+    IO.blocking:
+      val projectDir = config.path.getParent
+      var removedFiles = 0
+
+      val damlDir = projectDir.resolve(".daml")
+      if Files.exists(damlDir) then
+        Files.walk(damlDir).sorted(java.util.Comparator.reverseOrder())
+          .forEach: p =>
+            Files.delete(p)
+            removedFiles += 1
+
+      Files.list(projectDir).iterator().asScala
+        .filter(_.toString.endsWith(".dar"))
+        .foreach: p =>
+          Files.delete(p)
+          removedFiles += 1
+
+      CleanResult(config.name, removedFiles)
 
   private[cli] def computeBuildOrder(graph: Map[String, Seq[String]]): Seq[BuildStep] =
     val stepOf = scala.collection.mutable.Map.empty[String, Int]
