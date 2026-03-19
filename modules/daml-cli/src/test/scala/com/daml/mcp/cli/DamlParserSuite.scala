@@ -1,6 +1,7 @@
 package com.daml.mcp.cli
 
 import munit.FunSuite
+import com.daml.mcp.cli.models.DamlField
 
 class DamlParserSuite extends FunSuite:
 

@@ -1,43 +1,30 @@
 package com.daml.mcp.cli
 
 import cats.effect.IO
+import com.daml.mcp.cli.models.DamlProjectConfig
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
 final case class DamlProject(root: Path):
 
-  private val damlYamlPath: Path = root.resolve("daml.yaml")
+  def damlProjectYamlPaths: IO[Seq[Path]] = IO.blocking:
+    val rootYaml = root.resolve("daml.yaml")
+    val fromRoot = if Files.exists(rootYaml) then Seq(rootYaml) else Seq.empty
+    val fromTree = Files
+      .walk(root)
+      .iterator()
+      .asScala
+      .filter(p => p.getFileName.toString == "daml.yaml" && p != rootYaml)
+      .toSeq
+    (fromRoot ++ fromTree).distinct
 
-  def exists: IO[Boolean] = IO.blocking(Files.exists(damlYamlPath))
-
-  def damlYaml: IO[Option[String]] = IO.blocking:
-    if Files.exists(damlYamlPath) then Some(Files.readString(damlYamlPath))
-    else None
-
-  def sourceDirectories: IO[Seq[Path]] =
-    damlYaml.map:
-      _.flatMap: content =>
-        content.linesIterator
-          .dropWhile(l => !l.startsWith("source:"))
-          .take(1)
-          .map(_.stripPrefix("source:").trim)
-          .toList
-          .headOption
-      .map(src => Seq(root.resolve(src)))
-        .getOrElse(Seq(root.resolve("daml")))
-
-  def damlFiles: IO[Seq[Path]] =
-    sourceDirectories.flatMap: dirs =>
-      IO.blocking:
-        dirs
-          .filter(Files.exists(_))
-          .flatMap: dir =>
-            Files
-              .walk(dir)
-              .iterator()
-              .asScala
-              .filter(p => p.toString.endsWith(".daml"))
-              .toSeq
+  def damlProjects: IO[Seq[DamlProjectConfig]] =
+    damlProjectYamlPaths.flatMap: paths =>
+      IO.traverse(paths): path =>
+        IO.blocking:
+          val content = Files.readString(path)
+          DamlYamlParser.parseDamlProjectConfig(content)
+      .map(_.flatten)
 
   def readFile(path: Path): IO[Option[String]] = IO.blocking:
     if Files.exists(path) && path.startsWith(root) then Some(Files.readString(path))

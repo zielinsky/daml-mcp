@@ -30,6 +30,7 @@ lazy val damlCli = (project in file("modules/daml-cli"))
     libraryDependencies ++= Seq(
       "org.typelevel" %% "cats-effect"       % catsEffectVersion,
       "org.typelevel" %% "munit-cats-effect" % munitCEVersion % Test,
+      "org.yaml"       % "snakeyaml"         % "2.4",
     ),
   )
 

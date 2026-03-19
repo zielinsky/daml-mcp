@@ -16,9 +16,8 @@ import java.io.File
 import java.nio.file.Path
 
 @main def run(args: String*): Unit =
-  val port = 8080
-
-  val projectPath = args.headOption.getOrElse(".")
+  val port = args.find(_.startsWith("-port=")).map(_.stripPrefix("-port=")).map(_.toInt).getOrElse(8080)
+  val projectPath = args.find(_.startsWith("-path=")).map(_.stripPrefix("-path=")).orElse(Option(System.getenv("DAML_PROJECT_PATH"))).getOrElse(".")
   val project = DamlProject(Path.of(projectPath).toAbsolutePath.normalize)
   val projectService = DamlProjectService(project)
 
@@ -46,8 +45,7 @@ import java.nio.file.Path
     .build()
 
   tools.all.foreach(mcpServer.addTool)
-  resources.allResources.foreach(mcpServer.addResource)
-  resources.allResourceTemplates.foreach(mcpServer.addResourceTemplate)
+  resources.all.foreach(mcpServer.addResource)
   prompts.all.foreach(mcpServer.addPrompt)
 
   val tomcat = Tomcat()
@@ -62,4 +60,5 @@ import java.nio.file.Path
 
   tomcat.start()
   System.err.println(s"DAML MCP Server: http://localhost:$port/mcp")
+  System.err.println(s"Project root: $projectPath (resolved: ${project.root})")
   tomcat.getServer.await()
